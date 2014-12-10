@@ -581,6 +581,19 @@ snippet itself contains a condition that returns the symbol
     map)
   "The keymap used when `yas-minor-mode' is active.")
 
+(defvar yas--current-map (make-composed-keymap ()  yas-minor-mode-map)
+  "The true keymap of `yas-minor-mode'.
+
+Will hold direct keybindings as well as the bindings from
+`yas-minor-mode-map'.")
+
+(defun yas--set-current-map ()
+  "Update `yas--current-map' according to `yas--direct-keymaps'."
+  (setq yas--current-map
+        (make-composed-keymap yas--direct-keymaps yas-minor-mode-map))
+  (let ((mmma-cell (assq 'yas-minor-mode minor-mode-map-alist)))
+    (when mmma-cell (setcdr mmma-cell yas--current-map))))
+
 (easy-menu-define yas--minor-mode-menu
       yas-minor-mode-map
       "Menu used when `yas-minor-mode' is active."
@@ -708,26 +721,17 @@ There might be additional parenting information stored in the
 not recorded here.")
 
 (defvar yas--direct-keymaps (list)
-  "Keymap alist supporting direct snippet keybindings.
-
-This variable is placed in `emulation-mode-map-alists'.
-
-Its elements looks like (TABLE-NAME . KEYMAP).  They're
-instantiated on `yas-reload-all' but KEYMAP is added to only when
-loading snippets.  `yas--direct-TABLE-NAME' is then a variable set
-buffer-locally when entering `yas-minor-mode'.  KEYMAP binds all
-defined direct keybindings to the command
-`yas-expand-from-keymap' which then which snippet to expand.")
+  "Keymap list of direct snippet keybindings.")
 
 (defun yas-direct-keymaps-reload ()
   "Force reload the direct keybinding for active snippet tables."
   (interactive)
   (setq yas--direct-keymaps nil)
   (maphash #'(lambda (name table)
-               (push (cons (intern (format "yas--direct-%s" name))
-                           (yas--table-direct-keymap table))
+               (push (yas--table-direct-keymap table)
                      yas--direct-keymaps))
-           yas--tables))
+           yas--tables)
+  (yas--set-current-map))
 
 (defun yas--modes-to-activate ()
   "Compute list of mode symbols that are active for `yas-expand'
@@ -767,31 +771,14 @@ Key bindings:
   nil
   ;; The indicator for the mode line.
   " yas"
+  'yas--current-map
   :group 'yasnippet
   (cond (yas-minor-mode
-         ;; Install the direct keymaps in `emulation-mode-map-alists'
-         ;; (we use `add-hook' even though it's not technically a hook,
-         ;; but it works). Then define variables named after modes to
-         ;; index `yas--direct-keymaps'.
-         ;;
-         ;; Also install the post-command-hook.
-         ;;
-         (add-hook 'emulation-mode-map-alists 'yas--direct-keymaps)
          (add-hook 'post-command-hook 'yas--post-command-handler nil t)
-         ;; Set the `yas--direct-%s' vars for direct keymap expansion
-         ;;
-         (dolist (mode (yas--modes-to-activate))
-           (let ((name (intern (format "yas--direct-%s" mode))))
-             (set-default name nil)
-             (set (make-local-variable name) t)))
-         ;; Perform JIT loads
-         ;;
-         (yas--load-pending-jits))
+         (yas--load-pending-jits)
+         (yas--set-current-map))
         (t
-         ;; Uninstall the direct keymaps and the post-command hook
-         ;;
-         (remove-hook 'post-command-hook 'yas--post-command-handler t)
-         (remove-hook 'emulation-mode-map-alists 'yas--direct-keymaps))))
+         (remove-hook 'post-command-hook 'yas--post-command-handler t))))
 
 (defun yas-activate-extra-mode (mode)
   "Activates the snippets for the given `mode' in the buffer.
@@ -1352,9 +1339,10 @@ return an expression that when evaluated will issue an error."
     (unless table
       (setq table (yas--make-snippet-table (symbol-name mode)))
       (puthash mode table yas--tables)
-      (push (cons (intern (format "yas--direct-%s" mode))
-                  (yas--table-direct-keymap table))
-            yas--direct-keymaps))
+      (push (yas--table-direct-keymap table)
+            yas--direct-keymaps)
+      ;; The new table may have new keybindings.
+      (yas--set-current-map))
     table))
 
 (defun yas--get-snippet-tables ()
@@ -2202,7 +2190,7 @@ object satisfying `yas--field-p' to restrict the expansion to."
       (yas--fallback))))
 
 (defun yas-expand-from-keymap ()
-  "Directly expand some snippets, searching `yas--direct-keymaps'.
+  "Directly expand some snippets.
 
 If expansion fails, execute the previous binding for this key"
   (interactive)
@@ -2285,7 +2273,6 @@ Common gateway for `yas-expand-from-trigger-key' and
 (defun yas--keybinding-beyond-yasnippet ()
   "Get current keys's binding as if YASsnippet didn't exist."
   (let* ((yas-minor-mode nil)
-         (yas--direct-keymaps nil)
          (keys (this-single-command-keys)))
     (or (key-binding keys t)
         (key-binding (yas--fallback-translate-input keys) t))))
@@ -4339,7 +4326,7 @@ object satisfying `yas--field-p' to restrict the expansion to.")))
                    (templates (mapcan #'(lambda (table)
                                           (yas--fetch table vec))
                                       (yas--get-snippet-tables)))
-                   (yas--direct-keymaps nil)
+                   (yas-minor-mode nil)
                    (fallback (key-binding vec)))
               (concat "In this case, "
                       (when templates
