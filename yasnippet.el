@@ -157,16 +157,14 @@
   (file-name-directory (or load-file-name buffer-file-name))
   "Directory that yasnippet was loaded from.")
 
-(defvar yas-installed-snippets-dir nil)
-(setq yas-installed-snippets-dir
-      (expand-file-name "snippets" yas--loaddir))
+(defconst yas-installed-snippets-dir (expand-file-name "snippets" yas--loaddir))
+(make-obsolete-variable 'yas-installed-snippets-dir "\
+Yasnippet no longer comes with installed snippets" "0.13")
 
 (defconst yas--default-user-snippets-dir
   (expand-file-name "snippets" user-emacs-directory))
 
-(defcustom yas-snippet-dirs (remove nil
-                                    (list yas--default-user-snippets-dir
-                                          'yas-installed-snippets-dir))
+(defcustom yas-snippet-dirs (list yas--default-user-snippets-dir)
   "List of top-level snippet directories.
 
 Each element, a string or a symbol whose value is a string,
@@ -1493,7 +1491,7 @@ Here's a list of currently recognized directives:
          expand-env
          binding
          uuid)
-    (if (re-search-forward "^# --\n" nil t)
+    (if (re-search-forward "^# --\\s-*\n" nil t)
         (progn (setq template
                      (buffer-substring-no-properties (point)
                                                      (point-max)))
@@ -1938,12 +1936,19 @@ prefix argument."
       (yas-direct-keymaps-reload)
 
       (run-hooks 'yas-after-reload-hook)
-      (yas--message (if errors 2 3)
-                    (if no-jit "Snippets loaded %s."
-                      "Prepared just-in-time loading of snippets %s.")
-                    (if errors
-                        "with some errors. Check *Messages*"
-                      "successfully")))))
+      (let ((no-snippets
+             (cl-every (lambda (table) (= (hash-table-count table) 0))
+                       (list yas--scheduled-jit-loads
+                             yas--parents yas--tables))))
+        (yas--message (if (or no-snippets errors) 2 3)
+                      (if no-jit "Snippets loaded %s."
+                        "Prepared just-in-time loading of snippets %s.")
+                      (cond (errors
+                             "with some errors.  Check *Messages*")
+                            (no-snippets
+                             "(but no snippets found)")
+                            (t
+                             "successfully")))))))
 
 (defvar yas-after-reload-hook nil
   "Hooks run after `yas-reload-all'.")
